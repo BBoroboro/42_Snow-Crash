@@ -2,17 +2,16 @@
 
 ## Analysis
 
-Let's chek what we have:
+## Enumeration
+
+In this challenge we have a perl script:
 ```bash
-  level12@SnowCrash:~$ ls -la
-  total 16
-  dr-xr-x---+ 1 level12 level12  120 Mar  5  2016 .
-  d--x--x--x  1 root    users    340 Aug 30  2015 ..
-  -r-x------  1 level12 level12  220 Apr  3  2012 .bash_logout
-  -r-x------  1 level12 level12 3518 Aug 30  2015 .bashrc
+  $ ls -la
+  [...]
   -rwsr-sr-x+ 1 flag12  level12  464 Mar  5  2016 level12.pl
-  -r-x------  1 level12 level12  675 Apr  3  2012 .profile
-  level12@SnowCrash:~$ cat level12.pl 
+```
+Containing:
+```perl
   #!/usr/bin/env perl
   # localhost:4646
   use CGI qw{param};
@@ -43,10 +42,19 @@ Let's chek what we have:
 
   n(t(param("x"), param("y")));
 ```
-We have a script running a webserver on port 4646. This line "$xx =~ tr/a-z/A-Z/" capitalize the first argument (x) and delete anything after a space so we can't directly write x="getflag>/tmp/token", which would be translated as "GETFLAG>/TMP/TOKEN. 
+## Investigation
 
-## Solution
-We can create a file and execute it, using "*" to execute all files named SCRIPT inside all directories including /tmp.
+The script runs a web server on port 4646 and processes user input through CGI parameters. The key vulnerable function is:
+```perl
+  @output = `egrep "^$xx" /tmp/xd 2>&1`;
+```
+User input from param("x") is stored in $xx, transformed using: uppercase conversion (tr/a-z/A-Z/) and whitespace truncation (s/\s.*//). However, the transformed value is still directly interpolated into a shell command executed via Perl backticks.
+
+## Vulnerability
+
+Perl backticks execute commands through `/bin/sh -c`, meaning the string is interpreted by a shell. Since `$xx` is inserted without sanitization, it becomes part of a shell command, enabling command injection.
+
+## Exploitation
 
 ```bash
   level12@SnowCrash:/tmp$ vim SCRIPT
@@ -60,10 +68,4 @@ We can create a file and execute it, using "*" to execute all files named SCRIPT
   ..level12@SnowCrash:/$ cat /tmp/flag
   Check flag.Here is your token : XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
-
-## Explaination
-
-@output = `egrep "^$xx" /tmp/xd 2>&1` is the critical line. param("x") returns the raw string sent in the query.
-For our curl that becomes the literal bytes: `/*/SCRIPT` (because we put the backticks inside single quotes client-side, so they arrive literally). $xx remains `/*/SCRIPT` because it is not affected by the translation to uppercase and there is no space. That $xx is interpolated directly into the backtick operator "egrep" because in Perl
-the backtick operator runs a command through the shell (/bin/sh -c ...) and the string inside the backticks is built with interpolation first. So the actual shell command constructed is: egrep "^`/*/SCRIPT`" /tmp/xd 2>&1. The shell that receives that command will parse the backticks as command-substitution. That means the shell will try to execute whatever is between the backticks — in our case /*/SCRIPT.
 

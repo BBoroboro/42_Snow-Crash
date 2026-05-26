@@ -2,42 +2,53 @@
 
 ## Analysis
 
-With the command "ls -la" we can identify a ".pcap" file:
-level02@SnowCrash:~$ ls -la
-```bash
-    total 24
-    dr-x------ 1 level02 level02  120 Mar  5  2016 .
-    d--x--x--x 1 root    users    340 Aug 30  2015 ..
-    -r-x------ 1 level02 level02  220 Apr  3  2012 .bash_logout
-    -r-x------ 1 level02 level02 3518 Aug 30  2015 .bashrc
+The provided environment contains a network capture file (`level02.pcap`), indicating that the challenge involves traffic analysis.
+
+## Enumerating
+
+By listing the home directory contents, the presence of a `.pcap` file is identified:
+Output:
+```txt
     ----r--r-- 1 flag02  level02 8302 Aug 30  2015 level02.pcap
-    -r-x------ 1 level02 level02  675 Apr  3  2012 .profile
 ```
 
-These files contain packet data of a network and are used to analyze the network characteristics. They also 
-contribute to controlling the network traffic and determining network status.
+This file contains captured network packets that can be analyzed using Wireshark, a packet analysis tool used to inspect network traffic at different protocol layers.
 
+## Exploitation 
 
-## Solution
-We'll have to download this file on the local machine with the command "scp".
-```
-    full cmd: scp -P <PORT> <NAME@IP>:<PATH_TO_FILE> <DESTINATION>
-    e.g  scp -P 4242 level02@192.168.186.130:/home/user/level02/level02.pcap .
-```
+Using `scp` we transfer the file locally for offline analysis:
+```txt
+    scp -P 4242 level02@192.168.186.130:/home/user/level02/level02.pcap .
+    chmod 777 level02.pcap
+``` 
 
-Then we need to level02.pcap file's rights to be able to read it.
-cmd: chmod 777 level02.pcap
+### Traffic Analysis
 
-This allows use to use wireshark, a powerful network protocol analyzer. It lets you capture, inspect, and filter packets sent and received over a network (or stored in a .pcap file). But we could also use tcpdump -r file.pcap in terminal-only mode.
+The capture is opened in Wireshark, revealing TCP communication streams.
+  <!-- ![TCP Stream Analysis](resources/SN_Wireshark3.png) -->
 
-For TCP conversations (e.g., HTTP, FTP, Telnet, etc.): Right-click a packet → Follow → TCP Stream (or UDP stream). 
-Wireshark reconstructs the conversation in plain text. Great for extracting credentials, messages, or flags in CTFs.
+<p align="center">
+  <img src="resources/SN_Wireshark1.png" width="750"/>
+</p>
 
-Doing so we find this line Password: "ft_wandr...NDRel.L0L". Trying it as password doesn't work, but if we show the
-data as RAW, we can see that the character "." is represented by "7F" which is the equivalent of DEL in the ASCII table.
-So if "delete" the "." and the same amount of characters preceding each "." we get "ft_waNDReL0L".
+Using Follow TCP Stream, the communication is reconstructed into readable text:
 
-Let's try it:
+<p align="center">
+  <img src="resources/SN_Wireshark2.png" width="750"/>
+</p>
+
+This capture appears to represent an interactive remote login session over TCP in which a password-like string is observed `Password: "ft_wandr...NDRel.L0L"`.
+
+<p align="center">
+  <img src="resources/SN_Wireshark3.png" width="750"/>
+</p>
+
+Raw byte inspection shows that the `.` characters correspond to `0x7f` (DEL), indicating deleted characters in the terminal stream.
+So if we remove `.` and the same amount of characters preceeding each `.` we get the following string `ft_waNDReL0L`.
+
+## Result
+
+The recovered password is used to authenticate:
 ```bash
     level02@SnowCrash:~$ su flag02
     Password: 
@@ -46,4 +57,9 @@ Let's try it:
     Check flag.Here is your token : XXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-Level Passed!
+N.B: `tcpdump` is another tool we could use to succeed this challenge in terminal-only mode.
+
+## Takeaways
+
+- TCP streams can contain full interactive terminal sessions in plaintext.
+- Terminal control characters (e.g. 0x7f) can represent deleted input and must be interpreted for accurate reconstruction.

